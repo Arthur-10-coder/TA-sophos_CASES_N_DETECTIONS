@@ -1,48 +1,50 @@
 import json
 import logging
+import requests
 
 import import_declare_test
 from solnlib import conf_manager, log
 from splunklib import modularinput as smi
-
+from sophos_client import SophosClient as sc
 
 ADDON_NAME = "ta_sophos_cases_n_detections"
 
 def logger_for_input(input_name: str) -> logging.Logger:
     return log.Logs().get_logger(f"{ADDON_NAME.lower()}_{input_name}")
 
+def get_account_property(session_key: str, account_name: str, property_name: str):
+    """Retreive a specific property for a given Sophos account."""
+    try:
+        cfm = conf_manager.ConfManager(
+            session_key,
+            ADDON_NAME,
+            realm=f"__REST_CREDENTIAL__#{ADDON_NAME}#configs/conf-ta_sophos_cases_n_detections_account",
+        )
+        account_conf_file = cfm.get_conf("ta_sophos_cases_n_detections_account")
+        return account_conf_file.get(account_name).get(property_name)
+    except Exception as e:
+        raise RuntimeError(f"Failed to retrieve {property_name} for account {account_name}: {str(e)}")
 
-def get_account_api_key(session_key: str, account_name: str):
-    cfm = conf_manager.ConfManager(
-        session_key,
-        ADDON_NAME,
-        realm=f"__REST_CREDENTIAL__#{ADDON_NAME}#configs/conf-ta_sophos_cases_n_detections_account",
-    )
-    account_conf_file = cfm.get_conf("ta_sophos_cases_n_detections_account")
-    return account_conf_file.get(account_name).get("api_key")
-
-
-def get_data_from_api(logger: logging.Logger, api_key: str):
-    logger.info("Getting data from an external API")
-    dummy_data = [
-        {
-            "line1": "hello",
-        },
-        {
-            "line2": "world",
-        },
-    ]
-    return dummy_data
-
-
-def validate_input(definition: smi.ValidationDefinition):
-    return
-
+def get_data_from_api(logger: logging.Logger, account_region: str, tenant_id: str, access_token: str):
+    logger.info("Retrieving data from the Sophos Central Cases API")
+    api_url = f'https://api-{account_region}.central.sophos.com/cases/v1/cases'
+    headers = {
+        'Authorization': f'Bearer {access_token}',
+        'X-Tenant-ID': tenant_id
+    }
+    try:
+        response = requests.get(api_url, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        return data
+    except requests.RequestException as e:
+        logger.error(f'Error retrieving cases: {e}')
+        return None
 
 def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
     # inputs.inputs is a Python dictionary object like:
     # {
-    #   "client_input://<input_name>": {
+    #   "cases_input://<input_name>": {
     #     "account": "<account_name>",
     #     "disabled": "0",
     #     "host": "$decideOnStartup",
@@ -64,9 +66,15 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
             )
             logger.setLevel(log_level)
             log.modular_input_start(logger, normalized_input_name)
-            api_key = get_account_api_key(session_key, input_item.get("account"))
-            data = get_data_from_api(logger, api_key)
-            sourcetype = "dummy-data"
+            
+            account_region = get_account_property(session_key, input_item.get("account"), "region")
+            client_id = get_account_property(session_key, input_item.get("account"), "client_id")
+            client_secret = get_account_property(session_key, input_item.get("account"), "client_secret")
+            
+            client = sc(logger,client_id,client_secret)
+
+            data = get_data_from_api(logger ,account_region, client.tenant_id, client.access_token)
+            sourcetype = "sophos:get:cases"
             for line in data:
                 event_writer.write_event(
                     smi.Event(

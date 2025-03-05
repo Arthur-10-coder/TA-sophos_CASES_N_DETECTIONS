@@ -59,7 +59,7 @@
         "inputs": {
             "services": [
                 {
-                    "name": "client_input",
+                    "name": "cases_input",
                     "entity": [
                         {
                             "type": "text",
@@ -111,8 +111,64 @@
                             "required": true
                         }
                     ],
-                    "inputHelperModule": "client_input_helper",
-                    "title": "client_input"
+                    "inputHelperModule": "detections_input_helper",
+                    "title": "Cases Input"
+                },
+                {
+                    "name": "detections_input",
+                    "entity": [
+                        {
+                            "type": "text",
+                            "label": "Name",
+                            "validators": [
+                                {
+                                    "type": "regex",
+                                    "errorMsg": "Input Name must begin with a letter and consist exclusively of alphanumeric characters and underscores.",
+                                    "pattern": "^[a-zA-Z]\\w*$"
+                                },
+                                {
+                                    "type": "string",
+                                    "errorMsg": "Length of input name should be between 1 and 100",
+                                    "minLength": 1,
+                                    "maxLength": 100
+                                }
+                            ],
+                            "field": "name",
+                            "help": "A unique name for the data input.",
+                            "required": true
+                        },
+                        {
+                            "type": "interval",
+                            "label": "Interval",
+                            "defaultValue": "300",
+                            "field": "interval",
+                            "options": {
+                                "range": [
+                                    10,
+                                    301
+                                ]
+                            },
+                            "help": "Time interval of the data input, in seconds.",
+                            "required": true
+                        },
+                        {
+                            "type": "index",
+                            "field": "index",
+                            "label": "Index"
+                        },
+                        {
+                            "type": "singleSelect",
+                            "label": "Account to use",
+                            "options": {
+                                "referenceName": "account"
+                            },
+                            "help": "Account to use for this input.",
+                            "field": "account",
+                            "required": true
+                        }
+                    ],
+                    "inputHelperModule": "cases_input_helper",
+                    "title": "Detections Input"
                 }
             ],
             "title": "Inputs",
@@ -176,9 +232,9 @@
     "meta": {
         "name": "ta_sophos_cases_n_detections",
         "restRoot": "ta_sophos_cases_n_detections",
-        "version": "0.0.1",
+        "version": "0.0.0+d064bf3",
         "displayName": "TA Sophos Cases and Detections",
-        "schemaVersion": "0.0.8",
+        "schemaVersion": "0.0.9",
         "supportedThemes": [
             "light",
             "dark"
