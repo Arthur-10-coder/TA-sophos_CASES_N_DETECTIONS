@@ -6,6 +6,9 @@ import import_declare_test
 from solnlib import conf_manager, log
 from splunklib import modularinput as smi
 from sophos_client import SophosClient as sc
+from solnlib.modular_input import checkpointer
+from datetime import datetime, timezone
+from urllib.parse import urlencode
 
 ADDON_NAME = "ta_sophos_cases_n_detections"
 
@@ -25,13 +28,22 @@ def get_account_property(session_key: str, account_name: str, property_name: str
     except Exception as e:
         raise RuntimeError(f"Failed to retrieve {property_name} for account {account_name}: {str(e)}")
 
-def get_data_from_api(logger: logging.Logger, account_region: str, tenant_id: str, access_token: str):
+
+def get_data_from_api(logger: logging.Logger, account_region: str, tenant_id: str, access_token: str, params: dict = None):
     logger.info("Retrieving data from the Sophos Central Cases API")
-    api_url = f'https://api-{account_region}.central.sophos.com/cases/v1/cases'
+    base_url = f'https://api-{account_region}.central.sophos.com/cases/v1/cases'
     headers = {
         'Authorization': f'Bearer {access_token}',
-        'X-Tenant-ID': tenant_id
+        'X-Tenant-ID': tenant_id,
+        'Accept': 'application/json'
     }
+    # Construct the URL with query parameters if provided
+    if params:
+        query_string = urlencode(params, doseq=True)
+        api_url = f'{base_url}?{query_string}'
+    else:
+        api_url = base_url
+
     try:
         response = requests.get(api_url, headers=headers)
         response.raise_for_status()
@@ -58,6 +70,18 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
         logger = logger_for_input(normalized_input_name)
         try:
             session_key = inputs.metadata["session_key"]
+                        # Initialize KV store checkpointer
+            try:
+                kvstore_checkpointer = checkpointer.KVStoreCheckpointer(
+                    "conversations_metrics_checkpointer",
+                    session_key,
+                    ADDON_NAME,
+                )
+            except Exception as e:
+                logger.error(f"Error initializing KVStoreCheckpointer: {str(e)}")
+                continue  # Skip this input if checkpointer fails
+
+            
             log_level = conf_manager.get_log_level(
                 logger=logger,
                 session_key=session_key,
@@ -73,16 +97,40 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
             
             client = sc(logger,client_id,client_secret)
 
-            data = get_data_from_api(logger ,account_region, client.tenant_id, client.access_token)
+            checkpointer_key_name = normalized_input_name
+
+                       # Retrieve the last checkpoint or set it to 1970-01-01 if it doesn't exist
+            try:
+                current_checkpoint = kvstore_checkpointer.get(checkpointer_key_name) or  datetime(1970, 1, 1).timestamp()
+            except Exception as e:
+                logger.warning(f"Error retrieving checkpoint: {str(e)}")
+            
+            start_time = datetime.fromtimestamp(current_checkpoint, tz=timezone.utc)
+
+            params = {
+                "createdAfter" : f"{start_time.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]}Z"
+            }
+
+            data = get_data_from_api(logger, account_region, client.tenant_id, client.access_token, params)
             sourcetype = "sophos:get:cases"
-            for line in data:
-                event_writer.write_event(
-                    smi.Event(
-                        data=json.dumps(line, ensure_ascii=False, default=str),
-                        index=input_item.get("index"),
-                        sourcetype=sourcetype,
+            if data:
+                for line in data:
+                    try:
+                        event_writer.write_event(
+                            smi.Event(
+                                data=json.dumps(line, ensure_ascii=False, default=str),
+                                index=input_item.get("index"),
+                                sourcetype=sourcetype,
+                            )
                     )
-                )
+                    except Exception as e:
+                        logger.error(f"Failed to write event: {str(e)}")
+
+                # Only update checkpoint if data was processed
+                try:
+                    kvstore_checkpointer.update(checkpointer_key_name, datetime.now(timezone.utc).timestamp())
+                except Exception as e:
+                    logger.error(f"Failed to update checkpoint: {str(e)}")
             log.events_ingested(
                 logger,
                 input_name,
