@@ -13,7 +13,7 @@ class SophosClient:
         tenant_id (str): Identifier for the Sophos tenant.
     """
 
-    def __init__(self, client_id: str, client_secret: str, logger: logging.Logger):
+    def __init__(self, logger: logging.Logger,client_id: str, client_secret: str):
         """
         Initialize the SophosClient with client credentials and a logger.
 
@@ -48,6 +48,7 @@ class SophosClient:
                 'client_secret': self.get_client_secret(),
                 'scope': 'token'
             }
+            self.logger.info(f"WORKING4 {auth_data}")
             response = requests.post(auth_url, data=auth_data)
             response.raise_for_status()
             self.access_token = response.json().get('access_token')

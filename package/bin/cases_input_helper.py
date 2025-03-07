@@ -28,30 +28,50 @@ def get_account_property(session_key: str, account_name: str, property_name: str
     except Exception as e:
         raise RuntimeError(f"Failed to retrieve {property_name} for account {account_name}: {str(e)}")
 
+def validate_input(definition: smi.ValidationDefinition):
+    return
+
 
 def get_data_from_api(logger: logging.Logger, account_region: str, tenant_id: str, access_token: str, params: dict = None):
-    logger.info("Retrieving data from the Sophos Central Cases API")
+    logger.info("Retrieving data from the Sophos Central Cases API with pagination")
     base_url = f'https://api-{account_region}.central.sophos.com/cases/v1/cases'
     headers = {
         'Authorization': f'Bearer {access_token}',
         'X-Tenant-ID': tenant_id,
         'Accept': 'application/json'
     }
-    # Construct the URL with query parameters if provided
-    if params:
-        query_string = urlencode(params, doseq=True)
+    
+    all_items = []
+    page = 1
+    page_size = 50  # Establecemos un tamaño de página razonable
+    
+    while True:
+        params_with_pagination = params.copy() if params else {}
+        params_with_pagination.update({"page": page, "size": page_size})
+        
+        query_string = urlencode(params_with_pagination, doseq=True)
         api_url = f'{base_url}?{query_string}'
-    else:
-        api_url = base_url
+        
+        try:
+            logger.info(f"Fetching page {page} from {api_url}")
+            response = requests.get(api_url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            
+            if "items" in data:
+                all_items.extend(data["items"])
+            
+            # Verificar si hay más páginas
+            if "pages" in data and page < data["pages"].get("total", page):
+                page += 1  # Incrementamos el número de página
+            else:
+                break  # Si no hay más páginas, terminamos el bucle
+        except requests.RequestException as e:
+            logger.error(f'Error retrieving cases: {e}')
+            break
+    
+    return all_items
 
-    try:
-        response = requests.get(api_url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        return data
-    except requests.RequestException as e:
-        logger.error(f'Error retrieving cases: {e}')
-        return None
 
 def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
     # inputs.inputs is a Python dictionary object like:
@@ -94,14 +114,17 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
             account_region = get_account_property(session_key, input_item.get("account"), "region")
             client_id = get_account_property(session_key, input_item.get("account"), "client_id")
             client_secret = get_account_property(session_key, input_item.get("account"), "client_secret")
-            
+            logger.info(f"WORKING1 {account_region} {client_id} {client_secret}")
             client = sc(logger,client_id,client_secret)
+            logger.info(f"WORKING2 {client.__dict__}")
 
             checkpointer_key_name = normalized_input_name
+            logger.info(f"WORKING3 {checkpointer_key_name}")
 
                        # Retrieve the last checkpoint or set it to 1970-01-01 if it doesn't exist
             try:
-                current_checkpoint = kvstore_checkpointer.get(checkpointer_key_name) or  datetime(1970, 1, 1).timestamp()
+                #kvstore_checkpointer.get(checkpointer_key_name) or 
+                current_checkpoint =  datetime(1970, 1, 1).timestamp()
             except Exception as e:
                 logger.warning(f"Error retrieving checkpoint: {str(e)}")
             
@@ -110,8 +133,13 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
             params = {
                 "createdAfter" : f"{start_time.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]}Z"
             }
+            
+            logger.info(f"WORKING5 Calling API {params}")
 
             data = get_data_from_api(logger, account_region, client.tenant_id, client.access_token, params)
+            
+            logger.info(f"WORKING6 DATA RETREIVED {data}")
+
             sourcetype = "sophos:get:cases"
             if data:
                 for line in data:
