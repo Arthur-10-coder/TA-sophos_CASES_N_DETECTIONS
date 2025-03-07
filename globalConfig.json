@@ -298,7 +298,7 @@
     "meta": {
         "name": "ta_sophos_cases_n_detections",
         "restRoot": "ta_sophos_cases_n_detections",
-        "version": "0.0.0+dc016a1",
+        "version": "0.0.0+9c0afa8",
         "displayName": "TA Sophos Cases and Detections",
         "schemaVersion": "0.0.9",
         "supportedThemes": [
