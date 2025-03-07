@@ -43,7 +43,7 @@ def get_data_from_api(logger: logging.Logger, account_region: str, tenant_id: st
     
     all_items = []
     page = 1
-    page_size = 50  # Establecemos un tamaño de página razonable
+    page_size = 50  
     
     while True:
         params_with_pagination = params.copy() if params else {}
@@ -115,7 +115,7 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
             client_id = get_account_property(session_key, input_item.get("account"), "client_id")
             client_secret = get_account_property(session_key, input_item.get("account"), "client_secret")
             logger.info(f"WORKING1 {account_region} {client_id} {client_secret}")
-            client = sc(logger,client_id,client_secret)
+            client = sc(logger,client_id,client_secret,session_key)
             logger.info(f"WORKING2 {client.__dict__}")
 
             checkpointer_key_name = normalized_input_name
@@ -123,8 +123,8 @@ def stream_events(inputs: smi.InputDefinition, event_writer: smi.EventWriter):
 
                        # Retrieve the last checkpoint or set it to 1970-01-01 if it doesn't exist
             try:
-                #kvstore_checkpointer.get(checkpointer_key_name) or 
-                current_checkpoint =  datetime(1970, 1, 1).timestamp()
+                
+                current_checkpoint =kvstore_checkpointer.get(checkpointer_key_name) or datetime(1970, 1, 1).timestamp()
             except Exception as e:
                 logger.warning(f"Error retrieving checkpoint: {str(e)}")
             
