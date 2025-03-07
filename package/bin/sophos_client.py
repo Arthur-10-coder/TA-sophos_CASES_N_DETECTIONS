@@ -6,16 +6,40 @@ from solnlib.modular_input import checkpointer
 ADDON_NAME = "ta_sophos_cases_n_detections"
 
 class SophosClient:
-    _instance = None  # Singleton instance dentro del mismo proceso
+    """
+    Singleton class for handling authentication and API interactions with Sophos Central.
+    Manages OAuth2 tokens and tenant ID retrieval.
+    """
+    _instance = None  # Singleton instance within the same process
 
     def __new__(cls, logger: logging.Logger, client_id: str, client_secret: str, session_key: str):
+        """
+        Creates or retrieves a singleton instance of SophosClient.
+        
+        Args:
+            logger (logging.Logger): Logger instance for logging events.
+            client_id (str): OAuth2 Client ID.
+            client_secret (str): OAuth2 Client Secret.
+            session_key (str): Splunk session key for authentication.
+
+        Returns:
+            SophosClient: Singleton instance of SophosClient.
+        """
         if cls._instance is None:
             cls._instance = super(SophosClient, cls).__new__(cls)
             cls._instance._init_client(logger, client_id, client_secret, session_key)
-            logger.info(f"WORKING_-1 CREATING INSTANCE OF SOPHOS CLIENT {SophosClient._instance}")
         return cls._instance
 
     def _init_client(self, logger: logging.Logger, client_id: str, client_secret: str, session_key: str):
+        """
+        Initializes the SophosClient instance with credentials and retrieves cached tokens if available.
+
+        Args:
+            logger (logging.Logger): Logger instance.
+            client_id (str): OAuth2 Client ID.
+            client_secret (str): OAuth2 Client Secret.
+            session_key (str): Splunk session key.
+        """
         self._client_id = client_id
         self._client_secret = client_secret
         self.logger = logger
@@ -26,53 +50,52 @@ class SophosClient:
         self.token_expiry = 0
         self.kv_checkpointer = checkpointer.KVStoreCheckpointer("sophos_token_cache", session_key, ADDON_NAME)
 
-        self.logger.info(f"WORKING_0 Initializing SophosClient instance. {self.__dict__}")
         self._load_cached_token()
         self.authenticate()
         self.retrieve_tenant_id()
 
     def get_client_id(self):
-        """Devuelve el Client ID de la configuración."""
+        """
+        Returns the configured Client ID.
+
+        Returns:
+            str: Client ID.
+        """
         return self._client_id
 
     def get_client_secret(self):
-        """Devuelve el Client Secret de la configuración."""
+        """
+        Returns the configured Client Secret.
+
+        Returns:
+            str: Client Secret.
+        """
         return self._client_secret
 
-
     def _load_cached_token(self):
-        """Carga el token desde KV Store. Si no existe, autentica y lo crea."""
-        self.logger.info("WORKING_1 Checking for cached OAuth2 token in KV Store.")
-
+        """
+        Loads the OAuth2 token from KV Store if available, otherwise triggers authentication.
+        """
         try:
             cache = self.kv_checkpointer.get("sophos_token")
-
             if cache is None:
-                self.logger.info("WORKING_2 No cached token found in KV Store (first execution), calling authenticate().")
-                return  # Salimos ya que authenticate() maneja el almacenamiento del token
-
-            # Extraer datos del cache si existen
+                return
             self.access_token = cache.get("access_token")
             self.refresh_token = cache.get("refresh_token")
             self.tenant_id = cache.get("tenant_id")
             self.token_expiry = cache.get("token_expiry", 0)
-
-            self.logger.info("WORKING_3 Cached token found and loaded successfully.")
-
         except Exception as e:
-            self.logger.error(f"WORKING_4 Error retrieving cached token from KV Store: {e}")
-            self.logger.info("WORKING_5 Calling authenticate() as a fallback.")
-            self.authenticate()  # 🔹 Si hay un error, intentamos autenticar de nuevo.
-
+            self.logger.error(f"Error retrieving cached token from KV Store: {e}")
+            self.authenticate()
 
     def authenticate(self):
-        """Obtiene un nuevo token si ha expirado o usa el cacheado."""
+        """
+        Authenticates with Sophos Central and retrieves a new OAuth2 token if expired or unavailable.
+        """
         if self.access_token and time.time() < self.token_expiry - 60:
-            self.logger.info("WORKING_4 Using cached access token.")
             return
 
         try:
-            self.logger.info("WORKING_5 Requesting new OAuth2 token from Sophos.")
             auth_url = 'https://id.sophos.com/api/v2/oauth2/token'
             auth_data = {
                 'grant_type': 'client_credentials',
@@ -83,19 +106,21 @@ class SophosClient:
             response = requests.post(auth_url, data=auth_data)
             response.raise_for_status()
             token_response = response.json()
-
             self._store_token(token_response)
-
         except requests.RequestException as e:
-            self.logger.error(f'WORKING_7 HTTP request error during authentication: {e}')
+            self.logger.error(f'HTTP request error during authentication: {e}')
 
     def _store_token(self, token_response):
-        """Almacena token en KV Store para futuras ejecuciones."""
+        """
+        Stores the OAuth2 token in KV Store for future use.
+
+        Args:
+            token_response (dict): Token response from the authentication request.
+        """
         self.access_token = token_response.get('access_token')
         self.refresh_token = token_response.get('refresh_token')
         self.token_expiry = time.time() + token_response.get('expires_in', 3600)
 
-        self.logger.info("WORKING_8 Storing token in KV Store.")
         self.kv_checkpointer.update("sophos_token", {
             "access_token": self.access_token,
             "refresh_token": self.refresh_token,
@@ -103,27 +128,24 @@ class SophosClient:
         })
 
     def retrieve_tenant_id(self):
-        """Obtiene el Tenant ID de Sophos si no está almacenado en KV Store."""
+        """
+        Retrieves the Tenant ID from Sophos Central if not already cached.
+        """
         if self.tenant_id:
-            self.logger.info("WORKING_9 Using cached tenant ID.")
             return
 
         try:
-            self.logger.info("WORKING_10 Requesting tenant ID from Sophos API.")
             whoami_url = 'https://api.central.sophos.com/whoami/v1'
             headers = {'Authorization': f'Bearer {self.access_token}'}
             response = requests.get(whoami_url, headers=headers)
             response.raise_for_status()
             self.tenant_id = response.json().get('id')
 
-            self.logger.info("WORKING_11 Tenant ID obtained, storing in KV Store.")
             self.kv_checkpointer.update("sophos_token", {
                 "access_token": self.access_token,
                 "refresh_token": self.refresh_token,
                 "tenant_id": self.tenant_id,
                 "token_expiry": self.token_expiry
             })
-
         except requests.RequestException as e:
-            self.logger.error(f'WORKING_12 HTTP request error during tenant ID retrieval: {e}')
-
+            self.logger.error(f'HTTP request error during tenant ID retrieval: {e}')
